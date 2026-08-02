@@ -84,8 +84,9 @@
         },
         "ai-agent.opencode.model.provider": {
           "type": "string",
-          "default": "openai",
+          "default": "deepseek",
           "enum": [
+            "deepseek",
             "openai",
             "anthropic",
             "openrouter",
@@ -106,8 +107,8 @@
         },
         "ai-agent.opencode.model.model": {
           "type": "string",
-          "default": "gpt-4o",
-          "description": "Model name"
+          "default": "deepseek-chat",
+          "description": "Model name (supports provider/model format e.g. deepseek/deepseek-chat)"
         },
         "ai-agent.opencode.model.temperature": {
           "type": "number",

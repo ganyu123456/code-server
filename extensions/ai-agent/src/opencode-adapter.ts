@@ -1,6 +1,8 @@
 import * as vscode from 'vscode';
-import * as http from 'http';
-import * as https from 'https';
+import * as cp from 'child_process';
+import * as os from 'os';
+import * as path from 'path';
+import * as fs from 'fs';
 
 interface ChatMessage {
   role: 'user' | 'assistant' | 'system';
@@ -8,113 +10,175 @@ interface ChatMessage {
 }
 
 export class OpenCodeAdapter {
-  private currentRequest: http.ClientRequest | null = null;
+  private currentProcess: cp.ChildProcess | null = null;
 
   isServerRunning(): boolean {
-    return true;
+    return this.findOpenCode() !== null;
   }
 
   cancelRequest(): void {
-    if (this.currentRequest) {
-      this.currentRequest.destroy();
-      this.currentRequest = null;
+    if (this.currentProcess) {
+      this.currentProcess.kill('SIGTERM');
+      this.currentProcess = null;
     }
   }
 
   async startServer(): Promise<void> {
-    // No-op: direct API mode doesn't need a server process
+    // Write opencode config with current model settings
+    this.writeOpenCodeConfig();
   }
 
   async stopServer(): Promise<void> {
-    // No-op
+    this.cancelRequest();
   }
 
   async *streamChat(messages: ChatMessage[]): AsyncGenerator<string> {
     const config = vscode.workspace.getConfiguration('ai-agent.opencode');
     const provider = config.get<string>('model.provider', 'openai');
     const model = config.get<string>('model.model', 'gpt-4o');
-    const temperature = config.get<number>('model.temperature', 0.7);
-    const maxTokens = config.get<number>('model.maxTokens', 4096);
+    const apiKey = config.get<string>('model.apiKey', '');
+    const baseUrl = config.get<string>('model.baseUrl', '');
 
-    let apiKey = config.get<string>('model.apiKey', '');
-    let baseUrl = config.get<string>('model.baseUrl', '');
+    // Build opencode model reference: provider/model-name
+    const opencodeModel = model.includes('/') ? model : `${provider}/${model}`;
 
-    // Resolve env vars and fall back to process.env
-    apiKey = this.resolveEnvVar(apiKey) || process.env.OPENAI_API_KEY || '';
-    baseUrl = this.resolveEnvVar(baseUrl) || process.env.OPENAI_BASE_URL || 'https://api.openai.com/v1';
+    // Get the last user message
+    const lastMsg = messages.filter(m => m.role === 'user').pop();
+    if (!lastMsg) return;
 
-    if (!apiKey) throw new Error('API Key not configured. Set ai-agent.opencode.model.apiKey in Settings.');
+    const opencodePath = this.findOpenCode();
+    if (!opencodePath) throw new Error('OpenCode CLI not found');
 
-    // Ensure base URL ends without /v1
-    const apiBase = baseUrl.replace(/\/+$/, '');
-    const apiPath = '/v1/chat/completions';
+    // Write config before running
+    this.writeOpenCodeConfig();
 
-    const requestBody = JSON.stringify({
-      messages: messages.slice(-20),
-      model,
-      temperature,
-      max_tokens: maxTokens,
-      stream: true,
+    let allOutput = '';
+    let completed = false;
+    let lastYieldLen = 0;
+
+    const proc = cp.spawn(opencodePath, ['run', '--model', opencodeModel, lastMsg.content], {
+      env: {
+        ...(process.env as Record<string, string>),
+        ...(apiKey ? { OPENAI_API_KEY: this.resolveEnvVar(apiKey) } : {}),
+        ...(baseUrl ? { OPENAI_BASE_URL: this.resolveEnvVar(baseUrl) } : {}),
+        HOME: os.homedir(),
+      },
+      cwd: vscode.workspace.workspaceFolders?.[0]?.uri.fsPath || os.homedir(),
+      stdio: ['ignore', 'pipe', 'pipe'],
     });
 
-    const chunks: string[] = [];
-    let requestDone = false;
-    let requestError: Error | null = null;
+    this.currentProcess = proc;
 
-    const url = new URL(apiPath, apiBase);
-    const isHttps = url.protocol === 'https:';
-
-    const transport = isHttps ? https : http;
-    const req = transport.request(
-      {
-        hostname: url.hostname,
-        port: url.port || (isHttps ? 443 : 80),
-        path: url.pathname + url.search,
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${apiKey}`,
-          'Content-Length': Buffer.byteLength(requestBody).toString(),
-        },
-      },
-      (res: any) => {
-        let buffer = '';
-        res.on('data', (chunk: Buffer) => {
-          buffer += chunk.toString();
-          const lines = buffer.split('\n');
-          buffer = lines.pop() || '';
-          for (const line of lines) {
-            if (line.startsWith('data: ')) {
-              const data = line.slice(6).trim();
-              if (data === '[DONE]') continue;
-              try {
-                const content = JSON.parse(data).choices?.[0]?.delta?.content;
-                if (content) chunks.push(content);
-              } catch { /* skip malformed SSE */ }
-            }
-          }
-        });
-        res.on('end', () => { requestDone = true; });
-        res.on('error', (e: Error) => { requestError = e; requestDone = true; });
+    proc.stdout?.on('data', (data: Buffer) => {
+      const text = data.toString();
+      // Strip ANSI escape codes and status lines
+      const cleaned = text
+        .replace(/\x1b\[[0-9;]*m/g, '')
+        .replace(/[\x00-\x08\x0B\x0C\x0E-\x1F]/g, '');
+      const lines = cleaned.split('\n').filter(
+        l => l.trim() && !l.startsWith('>') && !l.startsWith('timestamp=')
+      );
+      if (lines.length > 0) {
+        allOutput += lines.join('\n') + '\n';
       }
-    );
+    });
 
-    req.on('error', (e: Error) => { requestError = e; requestDone = true; });
-    this.currentRequest = req;
-    req.write(requestBody);
-    req.end();
+    proc.on('close', (code) => {
+      if (code !== 0 && allOutput.length === 0) {
+        completed = true;
+      } else {
+        completed = true;
+      }
+    });
+
+    proc.on('error', () => {
+      completed = true;
+    });
 
     try {
-      while (!requestDone || chunks.length > 0) {
-        if (chunks.length > 0) {
-          yield chunks.shift()!;
-        } else if (!requestDone) {
-          await new Promise((r) => setTimeout(r, 10));
+      while (!completed || allOutput.length > lastYieldLen) {
+        if (allOutput.length > lastYieldLen) {
+          const newContent = allOutput.substring(lastYieldLen);
+          lastYieldLen = allOutput.length;
+          yield newContent;
+        }
+        if (!completed) {
+          await new Promise(r => setTimeout(r, 50));
         }
       }
-      if (requestError) throw requestError;
     } finally {
-      this.currentRequest = null;
+      this.currentProcess = null;
+      if (!completed) {
+        proc.kill('SIGTERM');
+      }
+    }
+  }
+
+  private writeOpenCodeConfig(): void {
+    const config = vscode.workspace.getConfiguration('ai-agent.opencode');
+    const provider = config.get<string>('model.provider', 'openai');
+    const model = config.get<string>('model.model', 'gpt-4o');
+    const apiKey = config.get<string>('model.apiKey', '');
+    const baseUrl = config.get<string>('model.baseUrl', '');
+
+    const resolvedKey = this.resolveEnvVar(apiKey) || process.env.OPENAI_API_KEY || '';
+    const resolvedUrl = this.resolveEnvVar(baseUrl) || process.env.OPENAI_BASE_URL || 'https://api.openai.com/v1';
+
+    // Build opencode config for custom provider
+    const opencodeConfig: any = {
+      $schema: 'https://opencode.ai/config.json',
+    };
+
+    // Only add custom provider if a non-default config is needed
+    if (provider !== 'openai' || resolvedUrl !== 'https://api.openai.com/v1') {
+      opencodeConfig.provider = {
+        [provider]: {
+          npm: '@ai-sdk/openai-compatible',
+          name: provider.charAt(0).toUpperCase() + provider.slice(1),
+          options: {
+            baseURL: resolvedUrl.replace(/\/+$/, ''),
+          },
+          models: {
+            [model]: { name: model },
+          },
+        },
+      };
+      if (resolvedKey) {
+        opencodeConfig.provider[provider].options.apiKey = resolvedKey;
+      }
+      opencodeConfig.model = `${provider}/${model}`;
+    }
+
+    const configDir = path.join(os.homedir(), '.config', 'opencode');
+    const configPath = path.join(configDir, 'opencode.jsonc');
+
+    try {
+      fs.mkdirSync(configDir, { recursive: true });
+      fs.writeFileSync(configPath, JSON.stringify(opencodeConfig, null, 2));
+    } catch {
+      // Non-critical: config may already exist or be unreadable
+      console.log('[opencode] Could not write config to', configPath);
+    }
+  }
+
+  private findOpenCode(): string | null {
+    const searchPaths = [
+      '/usr/local/bin/opencode',
+      '/usr/bin/opencode',
+      path.join(os.homedir(), '.bun/bin/opencode'),
+      path.join(os.homedir(), '.local/bin/opencode'),
+      '/opt/opencode/opencode',
+    ];
+    for (const p of searchPaths) {
+      try {
+        cp.execSync(`test -f "${p}"`, { stdio: 'ignore' });
+        return p;
+      } catch { /* continue */ }
+    }
+    try {
+      return cp.execSync('which opencode 2>/dev/null', { encoding: 'utf8' }).trim() || null;
+    } catch {
+      return null;
     }
   }
 
