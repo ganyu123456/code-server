@@ -28,7 +28,7 @@ RUN apt-get update \
 RUN curl -fsSL https://bun.sh/install | bash \
   && cp /root/.bun/bin/bun /usr/local/bin/bun \
   && cp /root/.bun/bin/bunx /usr/local/bin/bunx
-RUN curl -fsSL https://opencode.ai/install.sh | bash \
+RUN curl -fsSL https://opencode.ai/install | bash \
   || (bun install -g opencode-ai@latest)
 RUN echo 'export PATH="$HOME/.bun/bin:$PATH"' >> /etc/profile.d/opencode.sh \
   && echo 'export PATH="$HOME/.bun/bin:$PATH"' >> /etc/bash.bashrc \
