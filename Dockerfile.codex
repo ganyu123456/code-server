@@ -32,9 +32,11 @@ RUN curl -fsSL https://opencode.ai/install | bash \
   || (bun install -g opencode-ai@latest)
 RUN echo 'export PATH="$HOME/.bun/bin:$PATH"' >> /etc/profile.d/opencode.sh \
   && echo 'export PATH="$HOME/.bun/bin:$PATH"' >> /etc/bash.bashrc \
-  && ln -sf /root/.opencode/bin/opencode /usr/local/bin/opencode 2>/dev/null \
-  || ln -sf /root/.bun/bin/opencode /usr/local/bin/opencode 2>/dev/null \
-  || true
+  && { \
+    cp /root/.opencode/bin/opencode /usr/local/bin/opencode && chmod 755 /usr/local/bin/opencode; \
+  } || { \
+    cp /root/.bun/bin/opencode /usr/local/bin/opencode 2>/dev/null && chmod 755 /usr/local/bin/opencode; \
+  } || true
 COPY ai-agent.vsix /tmp/ai-agent.vsix
 RUN mkdir -p /home/coder/.local/share/code-server/extensions \
   && chown -R coder:coder /home/coder/.local/share/code-server/extensions \
