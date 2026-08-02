@@ -41,6 +41,8 @@ RUN mkdir -p /home/coder/.local/share/code-server/extensions \
   && /usr/bin/code-server --install-extension /tmp/ai-agent.vsix --extensions-dir /home/coder/.local/share/code-server/extensions
 RUN mkdir -p /home/coder/.config/code-server \
   && printf 'bind-addr: 0.0.0.0:8080\nauth: password\npassword: admin123\ncert: false\nextensions-dir: /home/coder/.local/share/code-server/extensions\n' > /home/coder/.config/code-server/config.yaml
+RUN mkdir -p /home/coder/.local/share/code-server/User \
+  && printf '{"chat.disableAIFeatures":true}\n' > /home/coder/.local/share/code-server/User/settings.json
 RUN chown -R coder:coder /home/coder
 EXPOSE 8080
 USER 1000
