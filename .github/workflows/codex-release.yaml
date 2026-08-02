@@ -1,0 +1,32 @@
+name: Build and Publish Codex code-server
+on:
+  push:
+    tags:
+      - 'codex-v*'
+  workflow_dispatch:
+    inputs:
+      tag:
+        type: string
+        required: false
+        default: 'latest'
+jobs:
+  build-and-push:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - name: Set tag
+        run: echo "TAG=${GITHUB_REF_NAME#codex-v}" >> $GITHUB_ENV
+      - name: Login to Harbor
+        uses: docker/login-action@v3
+        with:
+          registry: harbor.zkjgy.online
+          username: ${{ secrets.HARBOR_USER }}
+          password: ${{ secrets.HARBOR_PASS }}
+      - name: Build and push Docker image
+        run: |
+          docker build -f Dockerfile.codex \
+            -t harbor.zkjgy.online/codex/code-server:${TAG} \
+            -t harbor.zkjgy.online/codex/code-server:latest \
+            .
+          docker push harbor.zkjgy.online/codex/code-server:${TAG}
+          docker push harbor.zkjgy.online/codex/code-server:latest

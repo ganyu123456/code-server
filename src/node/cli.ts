@@ -6,7 +6,8 @@ import { generateCertificate, generatePassword, paths, splitOnFirstEquals } from
 import { EditorSessionManagerClient } from "./vscodeSocket"
 
 export enum Feature {
-  // No current experimental features!
+  AiAgent = "ai-agent",
+  // No current experimental features yet!
   Placeholder = "placeholder",
 }
 
@@ -57,6 +58,8 @@ export interface UserProvidedCodeArgs {
   "cookie-suffix"?: string
   "link-protection-trusted-domains"?: string[]
   // locale is used by both VS Code and code-server.
+  // AI Agent provider
+  "ai-agent"?: string
   locale?: string
 }
 
@@ -76,6 +79,7 @@ export interface UserProvidedArgs extends UserProvidedCodeArgs {
   "cert-key"?: string
   enable?: string[]
   help?: boolean
+  "ai-agent"?: string
   host?: string
   port?: number
   json?: boolean
@@ -196,6 +200,11 @@ export const options: Options<Required<UserProvidedArgs>> = {
   "disable-getting-started-override": {
     type: "boolean",
     description: "Disable the coder/coder override in the Help: Getting Started page.",
+  },
+  "ai-agent": {
+    type: "string",
+    description: "AI Agent provider for the Chat panel. Currently supports: opencode.",
+    default: "opencode",
   },
   "disable-proxy": {
     type: "boolean",
@@ -514,6 +523,7 @@ export const redactArgs = (args: UserProvidedArgs): UserProvidedArgs => {
  */
 export interface DefaultedArgs extends ConfigArgs {
   auth: AuthType
+  "ai-agent": string
   cert?: {
     value: string
   }
@@ -545,6 +555,9 @@ export async function setDefaults(cliArgs: UserProvidedArgs, configArgs?: Config
 
   if (!args["extensions-dir"]) {
     args["extensions-dir"] = path.join(args["user-data-dir"], "extensions")
+  }
+  if (!args["ai-agent"]) {
+    args["ai-agent"] = "opencode"
   }
 
   if (!args["session-socket"]) {

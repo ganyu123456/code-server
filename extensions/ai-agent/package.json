@@ -1,0 +1,142 @@
+{
+  "name": "ai-agent",
+  "displayName": "AI Agent Chat Panel",
+  "description": "Default AI chat participant for code-server, powered by OpenCode",
+  "version": "1.0.0",
+  "publisher": "codex",
+  "license": "MIT",
+  "engines": {
+    "vscode": "^1.86.0"
+  },
+  "categories": [
+    "Chat"
+  ],
+  "activationEvents": [
+    "onStartupFinished"
+  ],
+  "main": "./out/extension.js",
+  "contributes": {
+    "chatParticipants": [
+      {
+        "id": "ai-agent",
+        "name": "AI Agent",
+        "description": "Default AI coding assistant powered by OpenCode",
+        "isDefault": true,
+        "commands": [
+          {
+            "name": "explain",
+            "description": "Explain the selected code"
+          },
+          {
+            "name": "fix",
+            "description": "Fix the selected code"
+          },
+          {
+            "name": "test",
+            "description": "Generate tests for the selected code"
+          },
+          {
+            "name": "doc",
+            "description": "Generate documentation for the selected code"
+          }
+        ]
+      }
+    ],
+    "commands": [
+      {
+        "command": "ai-agent.switchAgent",
+        "title": "AI: Switch Agent",
+        "category": "AI"
+      },
+      {
+        "command": "ai-agent.restartAgent",
+        "title": "AI: Restart Agent",
+        "category": "AI"
+      }
+    ],
+    "configuration": {
+      "title": "AI Agent",
+      "properties": {
+        "ai-agent.defaultProvider": {
+          "type": "string",
+          "default": "opencode",
+          "enum": [
+            "opencode",
+            "claudecode",
+            "codex",
+            "hermes"
+          ],
+          "description": "Default AI Agent provider"
+        },
+        "ai-agent.opencode.enabled": {
+          "type": "boolean",
+          "default": true,
+          "description": "Enable OpenCode Agent"
+        },
+        "ai-agent.opencode.autoStart": {
+          "type": "boolean",
+          "default": true,
+          "description": "Auto-start OpenCode server on code-server launch"
+        },
+        "ai-agent.opencode.autoInstall": {
+          "type": "boolean",
+          "default": false,
+          "description": "Auto-install OpenCode CLI if not found"
+        },
+        "ai-agent.opencode.port": {
+          "type": "number",
+          "default": 4096,
+          "description": "Port for OpenCode server"
+        },
+        "ai-agent.opencode.model.provider": {
+          "type": "string",
+          "default": "openai",
+          "enum": [
+            "openai",
+            "anthropic",
+            "openrouter",
+            "ollama",
+            "custom"
+          ],
+          "description": "Model provider"
+        },
+        "ai-agent.opencode.model.apiKey": {
+          "type": "string",
+          "default": "",
+          "description": "API Key (supports ${ENV_VAR} syntax)"
+        },
+        "ai-agent.opencode.model.baseUrl": {
+          "type": "string",
+          "default": "",
+          "description": "Custom API base URL"
+        },
+        "ai-agent.opencode.model.model": {
+          "type": "string",
+          "default": "gpt-4o",
+          "description": "Model name"
+        },
+        "ai-agent.opencode.model.temperature": {
+          "type": "number",
+          "default": 0.7,
+          "minimum": 0,
+          "maximum": 2,
+          "description": "Model temperature"
+        },
+        "ai-agent.opencode.model.maxTokens": {
+          "type": "number",
+          "default": 4096,
+          "description": "Maximum output tokens"
+        }
+      }
+    }
+  },
+  "scripts": {
+    "vscode:prepublish": "tsc -p ./",
+    "compile": "tsc -p ./",
+    "watch": "tsc -watch -p ./"
+  },
+  "devDependencies": {
+    "@types/vscode": "^1.86.0",
+    "typescript": "^5.6.0"
+  }
+}

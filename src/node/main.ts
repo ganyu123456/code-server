@@ -1,3 +1,4 @@
+import { spawn } from "child_process"
 import { field, logger } from "@coder/logger"
 import http from "http"
 import * as os from "os"
@@ -132,6 +133,37 @@ export const runCodeServer = async (
 
   logger.info(`Using user-data-dir ${args["user-data-dir"]}`)
   logger.debug(`Using extensions-dir ${args["extensions-dir"]}`)
+
+  // Auto-install ai-agent extension if not present
+  try {
+    const extDir = args["extensions-dir"];
+    const aiAgentDir = path.join(extDir, "ai-agent");
+    if (!await isDirectory(aiAgentDir)) {
+      logger.info("Installing AI Agent extension...");
+      await new Promise<void>((resolve, reject) => {
+        const proc = spawn("code-server", ["--install-extension", path.join(vsRootPath, "../extensions/ai-agent.vsix")], {
+          env: { ...process.env, EXTENSIONS_DIR: extDir },
+        });
+        proc.on("close", (code) => {
+          if (code === 0) {
+            logger.info("AI Agent extension installed");
+            resolve();
+          } else {
+            logger.warn(`Failed to install AI Agent extension (exit $(code))`);
+            resolve();
+          }
+        });
+        proc.on("error", (err) => {
+          logger.warn(`Failed to install AI Agent extension: $(err.message)`);
+          resolve();
+        });
+      });
+    } else {
+      logger.info("AI Agent extension already installed");
+    }
+  } catch (error: any) {
+    logger.warn(`AI Agent extension setup skipped: $(error.message)`);
+  }
 
   if (args.auth === AuthType.Password && !args.password && !args["hashed-password"]) {
     throw new Error(
