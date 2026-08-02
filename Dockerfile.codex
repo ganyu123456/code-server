@@ -44,7 +44,7 @@ RUN mkdir -p /home/coder/.local/share/code-server/extensions \
 RUN mkdir -p /home/coder/.config/code-server \
   && printf 'bind-addr: 0.0.0.0:8080\nauth: password\npassword: admin123\ncert: false\nextensions-dir: /home/coder/.local/share/code-server/extensions\n' > /home/coder/.config/code-server/config.yaml
 RUN mkdir -p /home/coder/.local/share/code-server/User \
-  && printf '{"chat.disableAIFeatures":true}\n' > /home/coder/.local/share/code-server/User/settings.json
+  && printf '{"chat.disableAIFeatures":true,"ai-agent.opencode.model.provider":"deepseek","ai-agent.opencode.model.baseUrl":"https://api.deepseek.com/v1","ai-agent.opencode.model.model":"deepseek-chat"}\n' > /home/coder/.local/share/code-server/User/settings.json
 RUN chown -R coder:coder /home/coder
 EXPOSE 8080
 USER 1000
