@@ -1,47 +1,39 @@
 {
   "name": "ai-agent",
   "displayName": "AI Agent Chat Panel",
-  "description": "Default AI chat participant for code-server, powered by OpenCode",
+  "description": "AI coding assistant sidebar for code-server, powered by OpenCode",
   "version": "1.0.0",
-  "publisher": "codex",
+  "publisher": "opencode",
   "license": "MIT",
   "engines": {
-    "vscode": "^1.86.0"
+    "vscode": "^1.125.0"
   },
   "categories": [
     "Chat"
   ],
   "activationEvents": [
-    "onStartupFinished"
+    "onView:ai-agent.chatView"
   ],
   "main": "./out/extension.js",
   "contributes": {
-    "chatParticipants": [
-      {
-        "id": "ai-agent",
-        "name": "AI Agent",
-        "description": "Default AI coding assistant powered by OpenCode",
-        "isDefault": true,
-        "commands": [
-          {
-            "name": "explain",
-            "description": "Explain the selected code"
-          },
-          {
-            "name": "fix",
-            "description": "Fix the selected code"
-          },
-          {
-            "name": "test",
-            "description": "Generate tests for the selected code"
-          },
-          {
-            "name": "doc",
-            "description": "Generate documentation for the selected code"
-          }
-        ]
-      }
-    ],
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "ai-agent-sidebar",
+          "title": "AI Agent",
+          "icon": "$(robot)"
+        }
+      ]
+    },
+    "views": {
+      "ai-agent-sidebar": [
+        {
+          "type": "webview",
+          "id": "ai-agent.chatView",
+          "name": "Chat"
+        }
+      ]
+    },
     "commands": [
       {
         "command": "ai-agent.switchAgent",
@@ -51,6 +43,11 @@
       {
         "command": "ai-agent.restartAgent",
         "title": "AI: Restart Agent",
+        "category": "AI"
+      },
+      {
+        "command": "ai-agent.focusChatView",
+        "title": "AI: Focus Chat View",
         "category": "AI"
       }
     ],
@@ -67,11 +64,6 @@
             "hermes"
           ],
           "description": "Default AI Agent provider"
-        },
-        "ai-agent.opencode.enabled": {
-          "type": "boolean",
-          "default": true,
-          "description": "Enable OpenCode Agent"
         },
         "ai-agent.opencode.autoStart": {
           "type": "boolean",

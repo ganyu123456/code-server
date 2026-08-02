@@ -32,15 +32,15 @@ RUN curl -fsSL https://opencode.ai/install | bash \
   || (bun install -g opencode-ai@latest)
 RUN echo 'export PATH="$HOME/.bun/bin:$PATH"' >> /etc/profile.d/opencode.sh \
   && echo 'export PATH="$HOME/.bun/bin:$PATH"' >> /etc/bash.bashrc \
-  && ln -sf /root/.bun/bin/opencode /usr/local/bin/opencode 2>/dev/null || true
-COPY extensions/ai-agent /tmp/ai-agent-extension
-RUN cd /tmp/ai-agent-extension \
-  && npm install --ignore-scripts 2>/dev/null || true \
-  && npx --yes @vscode/vsce package --out /tmp/ai-agent.vsix 2>/dev/null || true
-RUN mkdir -p /usr/lib/code-server/extensions \
-  && /usr/bin/code-server --install-extension /tmp/ai-agent.vsix --extensions-dir /usr/lib/code-server/extensions 2>/dev/null || true
+  && ln -sf /root/.opencode/bin/opencode /usr/local/bin/opencode 2>/dev/null \
+  || ln -sf /root/.bun/bin/opencode /usr/local/bin/opencode 2>/dev/null \
+  || true
+COPY ai-agent.vsix /tmp/ai-agent.vsix
+RUN mkdir -p /home/coder/.local/share/code-server/extensions \
+  && chown -R coder:coder /home/coder/.local/share/code-server/extensions \
+  && /usr/bin/code-server --install-extension /tmp/ai-agent.vsix --extensions-dir /home/coder/.local/share/code-server/extensions
 RUN mkdir -p /home/coder/.config/code-server \
-  && printf 'bind-addr: 0.0.0.0:8080\nauth: password\npassword: admin123\ncert: false\nai-agent: opencode\n' > /home/coder/.config/code-server/config.yaml
+  && printf 'bind-addr: 0.0.0.0:8080\nauth: password\npassword: admin123\ncert: false\nextensions-dir: /home/coder/.local/share/code-server/extensions\n' > /home/coder/.config/code-server/config.yaml
 RUN chown -R coder:coder /home/coder
 EXPOSE 8080
 USER 1000

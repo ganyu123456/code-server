@@ -2,3 +2,5 @@
 !release-packages
 !ci
 !extensions
+!ai-agent.vsix
+!Dockerfile.codex

@@ -2,35 +2,44 @@
 
 ## 1. 背景与动机
 
-### 1.1 已有基础
+### 1.1 现状与可行性验证
 
-code-server 内嵌的 VS Code（当前 v1.131.0）已经内置了完整的 **Chat 基础设施**，包括：
+code-server 内嵌的 VS Code（当前 v1.131.0）提供了以下能力：
 
 - 活动栏 Chat 图标（`Cmd+Shift+I` / `Ctrl+Shift+I`）
-- 右侧/底部对话面板（支持拖拽、折叠、调整宽度）
-- 多轮对话界面（Markdown 渲染、代码高亮、历史记录）
-- 斜杠命令系统（`/explain`、`/fix`、`/test` 等）
-- 上下文感知（`#file`、`#selection`、当前编辑器）
-- 内联聊天（`Cmd+I` 在编辑器内直接对话）
-- 代码 diff 预览与一键应用
+- 原生 Chat 面板（Markdown 渲染、代码高亮、历史记录）
+- WebviewView 侧边栏 API（`vscode.window.registerWebviewViewProvider`）
 
-这些能力通过 VS Code 的 **Chat Participant API**（`vscode.chat`）对外暴露。GitHub Copilot Chat 本质上就是一个 Chat Participant 扩展，Continue、Cline、Cody 等也使用同一套 API。
+但是，本项目的 **Chat Participant API 方案已被验证不可行**：
 
-### 1.2 我们还需要什么
+| 尝试项 | 结果 | 原因 |
+|---|---|---|
+| `chatParticipants` + `isDefault` | ❌ 激活但报错 | "cannot register without path" |
+| `chatParticipants` → `chatAgents` | ❌ 同上 | 同上 |
+| `chatParticipants` + `fullName` | ❌ 同上 | 同上 |
+| `chatParticipants` → `chatParticipant` | ❌ 同上 | 同上 |
+| `languageModelChatProviders` | ⚠️ 激活不报错 | 端到端未验证 |
 
-用户当前的 code-server 虽然能看到 Chat 面板，但没有可用的 AI 后端，面板是空的。本方案的目标是：
+**根因**：在 VS Code for the web 环境中，`$registerAgent` 需要扩展文件通过 HTTP 可访问才能读取 manifest 中的 chat participant 声明。本地 `.vsix` 安装的扩展无法提供这个 path，因此被拒绝。
 
-**编写一个 Chat Participant 扩展，桥接 VS Code Chat API 与外部 AI Agent 后端，让用户在 code-server 中开箱即用地与 AI 对话编程。**
+### 1.2 业界最佳实践调研
 
-用户打开 Chat 面板后直接输入即可对话，无需输入 `@` 前缀——Agent 被配置为默认参与者，体验与 GitHub Codespaces 完全一致。
+| 项目 | 授权 | 方案 | 参考价值 |
+|---|---|---|---|
+| **Cline** | Apache 2.0 | WebviewView + React + postMessage | WebviewView 模式的标准参考实现 |
+| **forge (Enclave)** | MIT | ChatParticipant → WebviewView 迁移 | 完整记录了同一困境的解决路径 |
+| **claude-code-chat** | MIT | WebviewView + spawn claude CLI | CLI 进程管理 + webview 渲染 |
+| **Trae (ByteDance)** | 闭源 | VS Code Electron fork + 实验性 API | 架构思路参考（不适合 code-server） |
+
+**结论**：WebviewView + CLI 后端 + postMessage 流式通信 是经过多个项目验证的最佳实践。
 
 ### 1.3 设计原则
 
-- **不重复造轮子**：Chat UI 完全复用 VS Code 原生框架，本扩展只做桥接
-- **Agent 可替换**：不锁定单一 AI 服务商，支持多种 Agent 后端
-- **默认即对话**：用户打开面板即用，无需学习 `@` 前缀等调用方式
-- **配置可视化**：模型、Agent、MCP 均通过 VS Code Settings 管理
-- **零额外依赖启动**：首次启动 code-server 时自动安装 Agent 并加载扩展
+- **复用成熟模式**：WebviewView 参考 Cline/forge，Agent 抽象层保留上一版设计
+- **Agent 可替换**：通过统一抽象接口支持多种 Agent 后端
+- **UI 渐进增强**：Phase 1 轻量 HTML/CSS/JS，Phase 2 可升级为 React
+- **配置可视化**：模型、Agent 通过 VS Code Settings 管理
+- **零额外依赖启动**：扩展 .vsix 随 code-server 打包，启动时自动安装
 
 ## 2. Agent 后端支持规划
 
@@ -38,61 +47,41 @@ code-server 内嵌的 VS Code（当前 v1.131.0）已经内置了完整的 **Cha
 
 | Agent | 类型 | 连接方式 | 实现阶段 |
 |---|---|---|---|
-| OpenCode | 本地 CLI（`opencode serve`） | HTTP REST + SSE 流式 | Phase 1（当前） |
+| OpenCode | 本地 CLI（`opencode serve`） | HTTP + SSE 流式 | Phase 1（当前） |
 | Claude Code | 本地 CLI（`claude`） | 本地进程 stdio | Phase 2 |
 | Codex | 本地 CLI / 远程 API | HTTP / WebSocket | Phase 2 |
 | Hermes | 本地 CLI / 远程 API | HTTP / WebSocket | Phase 2 |
 
 ### 2.2 Agent 抽象层设计
 
-所有 Agent 后端通过统一抽象接口接入：
-
 ```typescript
 interface AgentAdapter {
-  /** Agent 标识符 */
   readonly id: string;
-  /** 人类可读名称 */
   readonly displayName: string;
-  /** 安装 Agent CLI */
   install(): Promise<void>;
-  /** 检查 Agent CLI 是否已安装 */
   isInstalled(): Promise<boolean>;
-  /** 启动 Agent 进程（如需要） */
   start(config: AgentConfig): Promise<void>;
-  /** 停止 Agent 进程 */
   stop(): Promise<void>;
-  /** 发送对话请求，返回流式响应 */
   chat(messages: ChatMessage[], context: ChatContext): AsyncIterable<ChatResponse>;
-  /** 健康检查 */
   healthCheck(): Promise<boolean>;
-  /** 获取可用模型列表 */
   listModels(): Promise<ModelInfo[]>;
 }
 ```
 
-不同类型的 Agent 后端实现各自的 `AgentAdapter`，Chat Participant 扩展只依赖这个抽象接口，不关心具体后端是谁。
-
-### 2.3 默认 Agent 机制
-
-扩展注册 Chat Participant 时将其设为默认参与者。当只有 OpenCode 一个 Agent 时，它自动成为默认值；当配置了多个 Agent 时，通过 `ai.agent.defaultProvider` 指定默认值。用户**直接输入即可对话**，无需 `@opencode` 前缀。
-
-当用户需要临时切换到其他 Agent 时，可通过 `@agent-name` 前缀显式调用（如 `@claudecode 解释这段代码`）。
-
-### 2.4 配置结构
+### 2.3 配置结构
 
 ```yaml
 # ~/.config/code-server/config.yaml
+extensions-dir: /home/coder/.local/share/code-server/extensions
+
 ai:
-  # 默认 Agent（用户直接对话使用的 Agent）
   agent:
     defaultProvider: opencode      # opencode | claudecode | codex | hermes
 
-  # OpenCode 配置
   opencode:
-    autoStart: true                # code-server 启动时自动启动 opencode serve
-    autoInstall: true              # 未检测到 CLI 时自动执行安装脚本
-    port: 4096                     # opencode serve 监听端口
-    startCommand: opencode serve   # 启动命令（可选覆盖）
+    autoStart: true
+    autoInstall: true
+    port: 4096
     model:
       provider: openai             # openai | anthropic | openrouter | ollama | custom
       apiKey: ${OPENAI_API_KEY}
@@ -100,155 +89,26 @@ ai:
       model: gpt-4o
       temperature: 0.7
       maxTokens: 4096
-
-  # Claude Code 配置（Phase 2）
-  claudecode:
-    autoStart: false               # 非默认 Agent 默认不自动启动
-    autoInstall: true
-    model:
-      provider: anthropic
-      apiKey: ${ANTHROPIC_API_KEY}
-      model: claude-sonnet-4-5-20250929
-
-  # Codex 配置（Phase 2）
-  codex:
-    autoStart: false
-    autoInstall: true
-    port: 4097
-
-  # Hermes 配置（Phase 2）
-  hermes:
-    autoStart: false
-    autoInstall: true
-    port: 4098
-
-  # MCP Server 配置
-  mcp:
-    servers:
-      - name: filesystem
-        command: npx
-        args: ["-y", "@anthropic/mcp-server-filesystem", "/workspace"]
-        enabled: true
-      - name: github
-        command: npx
-        args: ["-y", "@anthropic/mcp-server-github"]
-        env:
-          GITHUB_TOKEN: ${GITHUB_TOKEN}
-        enabled: false
 ```
 
-## 3. 详细功能需求
+### 2.4 多用户隔离
 
-### 3.1 Chat 对话体验
+同一 code-server 实例的多个 session，每人启动独立的 Agent 进程。Agent 监听端口 = `basePort + (pid % 100)`。
 
-**（以下功能 80% 由 VS Code Chat API 原生提供，本扩展只负责与 Agent 后端的桥接逻辑）**
+## 3. 架构设计
 
-| 功能 | 实现方式 |
-|---|---|
-| Chat 面板入口 | VS Code 原生，活动栏图标 + `Cmd+Shift+I` |
-| 直接对话（无需前缀） | VS Code Chat API 默认 Participant 机制 |
-| 多轮对话 | VS Code 原生 Chat 面板 |
-| Markdown 渲染 / 代码高亮 | VS Code 原生 |
-| 斜杠命令（`/explain`、`/fix` 等） | VS Code Chat API `request.command` |
-| 上下文引用（`#file`、`#selection`） | VS Code Chat API `request.references` |
-| 内联聊天（`Cmd+I`） | VS Code 原生 |
-| 消息流式输出 | VS Code Chat API `stream.markdown()` |
-| 代码 diff 预览与一键应用 | VS Code Chat API `stream.button()` + 自定义 Command |
-| 对话历史 | VS Code 原生（存储在 globalState） |
-| 切换到其他 Agent | `@agent-name` 显式调用 |
+### 3.1 WebviewView 方案 vs Chat Participant 方案
 
-扩展需要实现的核心逻辑：
-
-1. **注册默认 Chat Participant**：设为默认，用户打开面板即可直接对话
-2. **管理 Agent 进程生命周期**：激活时启动 Agent 服务，停用时 kill；每个用户独立 Agent 进程
-3. **Agent 自动安装**：检测到 Agent CLI 未安装时，自动执行安装脚本
-4. **消息转发**：将 Chat API 的请求转换为 Agent 后端的 HTTP 请求
-5. **流式响应**：将 Agent 后端的 SSE 流转换为 `stream.markdown()` 调用
-6. **上下文注入**：将 `request.references` 中的文件/选区内容注入到请求中
-
-### 3.2 模型提供商配置
-
-通过 VS Code 原生 `contributes.configuration` 提供设置界面。用户在 VS Code Settings（`Cmd+,`）中搜索 `ai-agent` 即可看到所有配置项。
-
-**支持的模型提供商：**
-
-| 提供商 | model.provider 值 | 说明 |
+| 维度 | Chat Participant（旧） | WebviewView（新） |
 |---|---|---|
-| OpenAI | `openai` | 通过 OpenAI API，支持 GPT-4o、GPT-4.1 等 |
-| Anthropic | `anthropic` | 通过 Anthropic API，支持 Claude 系列 |
-| OpenRouter | `openrouter` | 统一网关，支持多模型 |
-| Ollama | `ollama` | 本地部署，需配置 `baseUrl`（默认 `http://127.0.0.1:11434`） |
-| 自定义 | `custom` | 兼容 OpenAI API 协议的任意服务 |
+| 是否需 Copilot | 是 | **否** |
+| web VS Code 兼容 | 否 | **是** |
+| UI 控制 | 原生 Chat 面板 | 自定义 webview |
+| 流式渲染 | `stream.markdown()` | 自定义 SSE → DOM |
+| 参考实现 | — | Cline / forge / claude-code-chat |
+| 实现复杂度 | 低（桥接） | 中（需写 UI） |
 
-**本地模型（Ollama）专门配置项：**
-
-| 配置键 | 类型 | 默认值 | 说明 |
-|---|---|---|---|
-| `opencode.model.provider` | string | `openai` | 选择 `ollama` |
-| `opencode.model.baseUrl` | string | `http://127.0.0.1:11434` | Ollama 服务地址 |
-| `opencode.model.model` | string | `codellama` | 模型名称（如 `codellama`、`qwen2.5-coder` 等） |
-
-### 3.3 设置管理
-
-**核心配置项：**
-
-| 配置键 | 类型 | 默认值 | 说明 |
-|---|---|---|---|
-| `ai-agent.defaultProvider` | enum | `opencode` | 默认 Agent，用户直接对话使用的后端 |
-| `ai-agent.opencode.enabled` | boolean | true | 启用/禁用 OpenCode Agent |
-| `ai-agent.opencode.autoStart` | boolean | true | code-server 启动时自动启动 Agent |
-| `ai-agent.opencode.autoInstall` | boolean | true | 未检测到 CLI 时自动安装 |
-| `ai-agent.opencode.port` | number | 4096 | Agent 服务监听端口 |
-| `ai-agent.opencode.startCommand` | string | `opencode serve` | 自定义启动命令 |
-| `ai-agent.opencode.model.provider` | enum | `openai` | 模型提供商 |
-| `ai-agent.opencode.model.apiKey` | string | `""` | API Key（支持 `${ENV_VAR}` 语法） |
-| `ai-agent.opencode.model.baseUrl` | string | `""` | 自定义 API 地址 |
-| `ai-agent.opencode.model.model` | string | `gpt-4o` | 模型名称 |
-| `ai-agent.opencode.model.temperature` | number | 0.7 | 温度参数（0-2） |
-| `ai-agent.opencode.model.maxTokens` | number | 4096 | 最大输出 token |
-
-### 3.4 MCP Server 管理
-
-通过 `config.yaml` 声明式配置 MCP Server，修改后重启生效。后续 Phase 2 提供可视化 Webview 管理。
-
-```yaml
-ai:
-  mcp:
-    servers:
-      - name: filesystem
-        command: npx
-        args: ["-y", "@anthropic/mcp-server-filesystem", "/workspace"]
-        enabled: true
-```
-
-### 3.5 配置持久化
-
-- 扩展配置通过 VS Code 的 `contributes.configuration` 定义，由 VS Code 自动持久化到 `settings.json`
-- Agent 级别的配置（MCP、模型参数等）写入 `~/.config/code-server/config.yaml`
-- 环境变量引用（`${VAR}` 语法）支持从宿主环境注入密钥，避免明文存储
-
-### 3.6 Agent 自动安装与预装机制
-
-**Agent CLI 自动安装：**
-
-- 扩展激活时，对默认 Agent 执行 `isInstalled()` 检查
-- 若 `autoInstall: true` 且 CLI 未安装，自动调用安装脚本
-- 安装脚本由各 Agent 适配器的 `install()` 方法定义（如 OpenCode 的 `curl -fsSL https://opencode.ai/install.sh | sh`）
-- 安装失败时在 Chat 面板中显示错误提示，不阻塞 code-server 正常运行
-
-**扩展预装机制：**
-
-1. **内置打包**：`ai-agent` 扩展的 `.vsix` 文件随 code-server 发布，放在 `lib/extensions/ai-agent.vsix`
-2. **仅内置分发**：扩展仅作为 code-server 内置组件发布，不上架 VS Code Marketplace
-3. **自动安装**：code-server 启动时检查扩展是否已安装，未安装则执行 `--install-extension`
-
-### 3.7 多用户隔离
-
-同一 code-server 实例的多个用户（多 session），每人启动独立的 Agent 进程。Agent 进程监听不同端口（如 `port + sessionIndex`），进程间完全隔离，互不影响。
-
-## 4. 架构设计
-
-### 4.1 整体架构
+### 3.2 整体架构
 
 ```
 ┌──────────────────────────────────────────────────────────┐
@@ -257,155 +117,223 @@ ai:
 │  │  VS Code Workbench                                  │  │
 │  │                                                     │  │
 │  │  ┌──────────────┐    ┌──────────────────────────┐  │  │
-│  │  │  编辑器区域    │    │  Chat 面板（原生）         │  │  │
+│  │  │  编辑器区域    │    │  AI Chat 面板 (Webview)    │  │  │
 │  │  │              │    │  ┌────────────────────┐   │  │  │
-│  │  │              │    │  │  用户直接输入对话     │   │  │  │
-│  │  │              │    │  │  → 发送到默认 Agent  │   │  │  │
-│  │  │              │    │  │  斜杠命令 /explain   │   │  │  │
-│  │  │              │    │  │  #file 引用          │   │  │  │
-│  │  └──────────────┘    │  └────────┬───────────┘   │  │  │
-│  │                       └───────────┼───────────────┘  │  │
+│  │  │              │    │  │  HTML/CSS/JS        │   │  │  │
+│  │  │              │    │  │  - 消息列表          │   │  │  │
+│  │  │              │    │  │  - 输入框            │   │  │  │
+│  │  │              │    │  │  - Markdown 渲染     │   │  │  │
+│  │  │              │    │  │  - 流式输出          │   │  │  │
+│  │  │              │    │  └────────┬───────────┘   │  │  │
+│  │  └──────────────┘    └───────────┼───────────────┘  │  │
 │  └───────────────────────────────────┼──────────────────┘  │
 └──────────────────────────────────────┼─────────────────────┘
-                                       │ Chat Participant API
-                          ┌────────────▼──────────────────┐
-                          │  AI Agent Chat Participant      │
-                          │  Extension（本方案实现）         │
-                          │                                 │
-                          │  - 注册为默认 Chat Participant  │
-                          │  - Agent 进程生命周期管理        │
-                          │  - 消息转发与流式响应            │
-                          │  - 多 Agent 适配与切换          │
-                          │  - Agent 自动安装               │
-                          │  - 多用户多进程隔离              │
-                          └────────────┬──────────────────┘
+                                       │ postMessage
+                          ┌────────────▼──────────────────────┐
+                          │  AI Agent Extension (本方案实现)     │
+                          │                                    │
+                          │  WebviewViewProvider               │
+                          │  - 管理 webview 生命周期             │
+                          │  - postMessage 双向通信             │
+                          │  - Agent 进程生命周期管理            │
+                          │  - 消息转发与流式响应                │
+                          └────────────┬───────────────────────┘
                                        │ HTTP + SSE
-                          ┌────────────▼──────────────────┐
-                          │  Agent 后端                      │
-                          │  (opencode serve, root 运行)     │
-                          │                                 │
-                          │  - 对话引擎                      │
-                          │  - 工具调用                      │
-                          │  - MCP Client                   │
-                          └────────────┬──────────────────┘
-                                       │ HTTPS / 本地
-                          ┌────────────▼──────────────────┐
-                          │  LLM Provider                   │
-                          │  (OpenAI / Anthropic / Ollama)  │
-                          └────────────────────────────────┘
+                          ┌────────────▼───────────────────────┐
+                          │  Agent 后端 (opencode serve)        │
+                          │  - 对话引擎                          │
+                          │  - 工具调用                          │
+                          └────────────┬───────────────────────┘
+                                       │ HTTPS
+                          ┌────────────▼───────────────────────┐
+                          │  LLM Provider                       │
+                          │  (OpenAI / Anthropic / DeepSeek)    │
+                          └─────────────────────────────────────┘
 ```
 
-### 4.2 通信链路
+### 3.3 通信链路
 
 | 链路 | 协议 | 说明 |
 |---|---|---|
-| Chat UI ↔ Chat Participant | VS Code Chat API（进程内） | VS Code 原生通信 |
-| Chat Participant ↔ Agent | HTTP REST + SSE 流式 | 消息转发 |
-| Agent ↔ 云端 LLM | HTTPS | 模型调用 |
-| Agent ↔ 本地模型（Ollama） | HTTP | 本地模型调用 |
-| Agent ↔ MCP Server | 本地进程 stdio | 工具调用 |
+| Webview ↔ Extension | postMessage | 双向消息传递 |
+| Extension ↔ Agent | HTTP + SSE | opencode serve 的 OpenAI 兼容 API |
+| Agent ↔ LLM | HTTPS | 模型调用（通过 OPENAI_API_KEY 等环境变量配置） |
 
-### 4.3 运行环境
+### 3.4 Webview 消息协议
 
-- Agent 进程以 **root** 用户运行
-- Agent 进程**无资源限制**（不设 CPU/内存 cgroup 限制）
-- 每个用户 session 对应一个独立的 Agent 进程，监听独立端口
+**Extension → Webview (ExtensionMessage)**：
 
-### 4.4 启动流程
+```typescript
+type ExtensionMessage =
+  | { type: 'response'; content: string; partial: boolean }  // 流式响应块
+  | { type: 'error'; message: string }                       // 错误
+  | { type: 'status'; status: 'connecting' | 'ready' | 'error' }
+  | { type: 'modelInfo'; models: ModelInfo[] }
+```
+
+**Webview → Extension (WebviewMessage)**：
+
+```typescript
+type WebviewMessage =
+  | { type: 'chat'; message: string }          // 用户发送消息
+  | { type: 'command'; command: string }       // 斜杠命令
+  | { type: 'cancel' }                         // 取消当前请求
+  | { type: 'switchAgent'; agentId: string }   // 切换 Agent
+```
+
+### 3.5 启动流程
 
 ```
 code-server 启动
   │
-  ├─ 读取 config.yaml → 获取默认 Agent 配置
+  ├─ 读取 config.yaml → 获取扩展目录和 Agent 配置
   │
-  ├─ 检查 ai-agent 扩展是否已安装
-  │     └─ 未安装 → 从 lib/extensions/ai-agent.vsix 自动安装
+  ├─ main.ts: 检查 ai-agent 扩展是否已安装
+  │     └─ 未安装 → 从 extensions/ai-agent.vsix 自动安装
   │
-  ├─ VS Code Extension Host 激活 ai-agent
-  │     ├─ 读取默认 Agent（ai.agent.defaultProvider）
+  ├─ VS Code Extension Host 激活 ai-agent 扩展
+  │     ├─ 注册 WebviewViewProvider (侧边栏 Chat 面板)
   │     ├─ 检查 Agent CLI 是否已安装
   │     │     └─ 未安装且 autoInstall → 执行安装脚本
   │     ├─ 若 autoStart → spawn Agent 服务进程
   │     │     └─ 轮询健康检查 → 通过后标记就绪
-  │     ├─ 注册为默认 Chat Participant
-  │     │     └─ 用户打开面板直接对话，无需前缀
+  │     ├─ 监听 postMessage ← webview
   │     └─ 注册配置项到 VS Code Settings
   │
-  └─ 用户点击 Chat 图标 → 面板打开 → 直接输入 → 就绪
+  └─ 用户点击侧边栏图标 → Chat 面板打开 → 直接输入 → 对话
 ```
 
-### 4.5 Agent 切换
+### 3.6 流式对话流程
 
-用户在 VS Code Settings 中修改 `ai-agent.defaultProvider`，或通过命令面板 `>AI: Switch Agent` 切换：
+```
+用户输入消息 → webview postMessage('chat', text)
+  → Extension 收到 → HTTP POST opencode serve /v1/chat/completions
+  → SSE 流式读取响应 chunks
+  → 每个 chunk → postMessage('response', delta, partial: true)
+  → webview 渲染 Markdown（带闪烁光标）
+  → 流结束 → postMessage('response', '', partial: false)
+  → webview 移除光标
+```
 
-1. 停止当前 Agent 进程
-2. 若新 Agent CLI 未安装，自动安装
-3. 启动新 Agent 进程（每个用户独立端口）
-4. 更新默认 Chat Participant 的委托目标
-5. 后续对话自动路由到新 Agent
+## 4. 详细功能设计
 
-临时切换到非默认 Agent：在 Chat 面板中输入 `@agent-name` 前缀即可。
+### 4.1 Chat 面板
 
-## 5. 与 GitHub Codespaces 对标
+| 功能 | 实现方式 |
+|---|---|
+| 侧边栏入口 | 活动栏图标 + `Cmd+Shift+I` / `Ctrl+Shift+I` |
+| 消息输入 | textarea + Enter 发送 / Shift+Enter 换行 |
+| Markdown 渲染 | marked.js (轻量，~20KB) |
+| 代码高亮 | highlight.js (轻量，可按语言裁剪) |
+| 流式渲染 | SSE → 逐 chunk 追加 DOM，带闪烁光标 |
+| 斜杠命令 | `/explain`、`/fix`、`/test`、`/doc` |
+| 对话历史 | 存储在 webview sessionStorage，刷新保留 |
+| 模型选择 | 下拉框，从 Agent 获取可用模型列表 |
 
-| 维度 | GitHub Codespaces | 本方案 |
+### 4.2 上下文注入
+
+- 当前编辑器选区 → 自动附加为 context
+- `#file` 引用 → 读取文件内容注入 prompt
+- 未来：终端输出、诊断信息、Git diff
+
+### 4.3 模型提供商配置
+
+| 提供商 | model.provider | 说明 |
 |---|---|---|
-| 对话入口 | `Cmd+Shift+I`，直接输入 | `Cmd+Shift+I`，直接输入（相同） |
-| Chat 基础设施 | VS Code Chat API | VS Code Chat API（相同） |
-| 默认对话体验 | 打开面板即用 | 打开面板即用（相同） |
-| AI 后端 | Copilot（固定） | OpenCode / Claude Code / Codex / Hermes（可切换） |
-| 模型选择 | Copilot 内置模型 | 云端 API + 本地 Ollama 全覆盖 |
-| MCP 工具链 | 不支持 | 原生 MCP Server 管理 |
-| 数据流向 | GitHub 服务器 | 用户自控 |
-| 定价模式 | 订阅制 | 按自有 API 用量付费 |
-| 部署环境 | 仅 Codespaces | 任何运行 code-server 的机器 |
-| Agent 安装 | 预装，无需用户操作 | 自动检测 + 自动安装脚本 |
-| 多用户隔离 | — | 每人独立 Agent 进程 |
-| 分发方式 | — | 扩展仅内置，不公开上架 |
+| OpenAI | `openai` | GPT-4o、GPT-4.1 等 |
+| DeepSeek | `openai` | 设置 `baseUrl: https://api.deepseek.com/v1`，兼容 OpenAI 协议 |
+| Anthropic | `anthropic` | Claude 系列 |
+| OpenRouter | `openrouter` | 统一网关 |
+| Ollama | `ollama` | 本地部署 |
+| 自定义 | `custom` | 兼容 OpenAI API 协议的服务 |
 
-**差异化核心**：同等 Chat UX 体验 + Agent 完全可替换 + 数据主权归属用户。
+### 4.4 扩展设置
+
+| 配置键 | 类型 | 默认值 | 说明 |
+|---|---|---|---|
+| `ai-agent.defaultProvider` | enum | `opencode` | 默认 Agent |
+| `ai-agent.opencode.autoStart` | boolean | true | 启动时自动启动 Agent |
+| `ai-agent.opencode.autoInstall` | boolean | true | 自动安装 CLI |
+| `ai-agent.opencode.port` | number | 4096 | Agent 服务端口 |
+| `ai-agent.opencode.model.provider` | enum | `openai` | 模型提供商 |
+| `ai-agent.opencode.model.apiKey` | string | `""` | API Key（支持 `${ENV}`） |
+| `ai-agent.opencode.model.baseUrl` | string | `""` | 自定义 API 地址 |
+| `ai-agent.opencode.model.model` | string | `gpt-4o` | 模型名称 |
+| `ai-agent.opencode.model.temperature` | number | 0.7 | 温度 (0-2) |
+| `ai-agent.opencode.model.maxTokens` | number | 4096 | 最大输出 |
+
+### 4.5 扩展分发
+
+- 仅作为 code-server 内置组件分发，不上架 VS Code Marketplace
+- `.vsix` 文件随源码存放于 `extensions/ai-agent/`
+- code-server 启动时通过 `main.ts` 自动检测并安装到用户扩展目录
+
+## 5. 与业界产品对标
+
+| 维度 | GitHub Codespaces | Cline | 本方案 |
+|---|---|---|---|
+| 对话入口 | `Cmd+Shift+I` | 侧边栏图标 | 侧边栏图标 |
+| AI 后端 | Copilot（固定） | 33+ 提供商 | OpenCode / Claude Code 等 |
+| 模型选择 | Copilot 内置 | 用户配置 | 用户配置 |
+| 数据去向 | GitHub 服务器 | 用户自选 | 用户自控 |
+| 架构模式 | Chat Participant (原生) | WebviewView + React | WebviewView + 轻量 UI |
+| code-server 兼容 | 否 | 是 | 是 |
+| 开源 | 否 | Apache 2.0 | MIT |
+| MCP 支持 | 否 | 是 | Phase 2 |
 
 ## 6. 实施计划
 
-### Phase 1：OpenCode 适配（当前阶段）
+### Phase 1：OpenCode + WebviewView（当前阶段）
 
-**目标**：用户在 code-server 的 Chat 面板中直接输入即可与 OpenCode 对话。
+**目标**：用户在 code-server 侧边栏中打开 Chat 面板，选择模型后与 AI 对话。
 
-**交付物：**
+**交付物**：
 
-1. `ai-agent` VS Code 扩展
-   - 注册为**默认 Chat Participant**（用户直接对话，无需前缀）
-   - OpenCode CLI 自动检测 + `autoInstall` 安装脚本
-   - 激活时自动 `spawn opencode serve`
-   - 消息转发（HTTP POST → SSE 流式回包 → `stream.markdown()`）
-   - 上下文注入（`#file`、`#selection` → 拼入 prompt）
-   - 扩展停用时 kill OpenCode 进程
-   - `contributes.configuration` 贡献设置项（含 Ollama 本地模型配置）
-   - 多用户多进程隔离
+1. 重写 `extensions/ai-agent` 扩展
+   - 将 `vscode.chat.createChatParticipant` 替换为 `vscode.window.registerWebviewViewProvider`
+   - 移除 `package.json` 中的 `chatParticipants` 贡献
+   - 新增 `viewsContainers` + `views` 贡献
+   - 创建 `media/chat.html` — 聊天 webview UI（~150 行）
+   - 创建 `media/chat.js` — webview 逻辑（消息渲染、SSE 流式处理，~200 行）
+   - 创建 `media/chat.css` — VS Code 主题样式（~100 行）
+   - 保留并改进 `opencode-adapter.ts`（Agent 进程管理 + HTTP 代理）
+   - postMessage 协议实现
 
 2. code-server 集成
-   - `config.yaml` 新增 `ai` 配置段
-   - 新增 `--ai-agent` CLI 参数
-   - 内置 `ai-agent.vsix` 到 `lib/extensions/`，仅内置分发
-   - 启动时自动安装和启用扩展
+   - 修复 `src/node/main.ts` 扩展自动安装逻辑
+   - 修复 Dockerfile.codex 中 opencode 路径（`/root/.opencode/bin/opencode`）
+   - 修复 `.dockerignore` 添加 `!ai-agent.vsix`
+   - 扩展安装到用户扩展目录 + `extensions-dir` 写入 config.yaml
 
-3. 测试
-   - 扩展单元测试（Agent 进程管理、消息转发、安装脚本）
-   - E2E 测试（启动 code-server → 自动安装 OpenCode → Chat 面板可用 → 发送消息 → 收到回复）
-   - 多用户场景：两 session 同时对话，Agent 进程隔离验证
+3. Docker 镜像
+   - 在宿主机预编译 `.vsix`，Dockerfile 中 COPY 并安装
+   - 环境变量注入 API Key（`OPENAI_API_KEY`、`OPENAI_BASE_URL`）
+
+4. 测试验证
+   - 端到端：启动容器 → 打开浏览器 → 侧边栏 Chat 面板可用 → 发送消息 → 收到流式回复
+   - 多模型：OpenAI / DeepSeek / Ollama 各测试一次
 
 **预计工作量**：5-7 个工作日
 
-### Phase 2：多 Agent 支持 + MCP UI
+### Phase 2：多 Agent + MCP
 
-- 实现 `AgentAdapter` 抽象层
-- 适配 Claude Code、Codex、Hermes
-- Agent 切换面板（VS Code 命令面板 `>AI: Switch Agent`）
-- MCP Server Webview 管理界面
+- AgentAdapter 抽象层实现
+- Claude Code、Codex、Hermes 适配器
+- Agent 切换面板
+- MCP Server Webview 管理
 
 ### Phase 3：深度集成
 
 - 终端错误一键发送到 Chat
-- 代码诊断信息作为上下文
+- 代码诊断作为上下文
 - 自定义斜杠命令
 - 对话历史导出与搜索
+
+## 7. 参考项目
+
+| 项目 | 仓库 | 关键参考点 |
+|---|---|---|
+| Cline | `https://github.com/cline/cline` | WebviewViewProvider + React + postMessage |
+| forge | `https://github.com/robpitcher/forge` | ChatParticipant → WebviewView 迁移 |
+| claude-code-chat | `https://github.com/codeflow-studio/claude-code-chat` | WebviewView + CLI spawn |
+| Trae | ByteDance 闭源 | VS Code fork 层面扩展注入 |
