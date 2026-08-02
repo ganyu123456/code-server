@@ -12,6 +12,7 @@
     "Chat"
   ],
   "activationEvents": [
+    "onStartupFinished",
     "onView:ai-agent.chatView"
   ],
   "main": "./out/extension.js",

@@ -150,6 +150,14 @@ export async function activate(context: vscode.ExtensionContext) {
     vscode.window.registerWebviewViewProvider('ai-agent.chatView', providerInstance)
   );
 
+  // Open AI Agent sidebar by default and hide native Chat panel
+  setTimeout(async () => {
+    try {
+      await vscode.commands.executeCommand('ai-agent.chatView.focus');
+      await vscode.commands.executeCommand('workbench.action.chat.hide');
+    } catch { /* commands may not be available yet, retry once */ }
+  }, 1000);
+
   // Start OpenCode server if auto-start is enabled
   const autoStart = config.get<boolean>('opencode.autoStart', true);
   if (autoStart) {
