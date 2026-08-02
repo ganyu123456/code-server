@@ -18,7 +18,7 @@
   "main": "./out/extension.js",
   "contributes": {
     "viewsContainers": {
-      "activitybar": [
+      "secondarySidebar": [
         {
           "id": "ai-agent-sidebar",
           "title": "AI Agent",
@@ -31,7 +31,8 @@
         {
           "type": "webview",
           "id": "ai-agent.chatView",
-          "name": "Chat"
+          "name": "Chat",
+          "visibility": "visible"
         }
       ]
     },
