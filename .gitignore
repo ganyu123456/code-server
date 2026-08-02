@@ -22,3 +22,7 @@ test/test-results
 # Quilt's internal data.
 /.pc
 /patches/*.diff~
+
+.playwright-mcp/
+ai-agent.vsix
+extensions/ai-agent/out/
