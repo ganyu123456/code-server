@@ -3,7 +3,7 @@ set -euo pipefail
 HARBOR_URL="harbor.zkjgy.online"
 HARBOR_USER="admin"
 HARBOR_PASS="Harbor12345"
-HARBOR_PROJECT="codex"
+HARBOR_PROJECT="library"
 IMAGE_NAME="code-server"
 TAG="${TAG:-latest}"
 FULL_IMAGE="${HARBOR_URL}/${HARBOR_PROJECT}/${IMAGE_NAME}:${TAG}"

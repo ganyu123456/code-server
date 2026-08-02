@@ -25,8 +25,8 @@ jobs:
       - name: Build and push Docker image
         run: |
           docker build -f Dockerfile.codex \
-            -t harbor.zkjgy.online/codex/code-server:${TAG} \
-            -t harbor.zkjgy.online/codex/code-server:latest \
+            -t harbor.zkjgy.online/library/code-server:${TAG} \
+            -t harbor.zkjgy.online/library/code-server:latest \
             .
-          docker push harbor.zkjgy.online/codex/code-server:${TAG}
-          docker push harbor.zkjgy.online/codex/code-server:latest
+          docker push harbor.zkjgy.online/library/code-server:${TAG}
+          docker push harbor.zkjgy.online/library/code-server:latest
