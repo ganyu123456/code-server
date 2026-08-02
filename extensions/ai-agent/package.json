@@ -38,6 +38,12 @@
     },
     "commands": [
       {
+        "command": "ai-agent.openSettings",
+        "title": "AI Agent Settings",
+        "category": "AI",
+        "icon": "$(gear)"
+      },
+      {
         "command": "ai-agent.switchAgent",
         "title": "AI: Switch Agent",
         "category": "AI"
@@ -53,6 +59,20 @@
         "category": "AI"
       }
     ],
+    "menus": {
+      "view/title": [
+        {
+          "command": "ai-agent.openSettings",
+          "when": "view == ai-agent.chatView",
+          "group": "navigation"
+        },
+        {
+          "command": "ai-agent.restartAgent",
+          "when": "view == ai-agent.chatView",
+          "group": "navigation"
+        }
+      ]
+    },
     "configuration": {
       "title": "AI Agent",
       "properties": {

@@ -174,6 +174,9 @@ export async function activate(context: vscode.ExtensionContext) {
     vscode.commands.registerCommand('ai-agent.focusChatView', () => {
       vscode.commands.executeCommand('ai-agent.chatView.focus');
     }),
+    vscode.commands.registerCommand('ai-agent.openSettings', () => {
+      vscode.commands.executeCommand('workbench.action.openSettings', '@ext:opencode.ai-agent');
+    }),
     vscode.commands.registerCommand('ai-agent.switchAgent', async () => {
       const pick = await vscode.window.showQuickPick(
         [
